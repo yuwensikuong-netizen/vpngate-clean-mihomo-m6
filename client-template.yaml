@@ -1,0 +1,82 @@
+# Mihomo 客户端配置骨架：4 账号 provider 合并（M5）
+# 用法：把 4 个 url 换成 4 个账号的实际域名，合并进你现有的 Mihomo 配置。
+# 要求：Mihomo 内核 >= v1.19.30（支持 type: openvpn；v1.19.25–v1.19.29 要求必填 tls-crypt，VPN Gate 节点没有该字段，导入会失败）。
+# 原理：4 个账号各 serving 1/4 分片（?shard=0..3，同一 IP 永远只归属一片，天然去重），
+# 客户端 4 个 provider 合并后节点池 = 全集；任一账号宕机只少 1/4 节点，url-test 自动容灾。
+
+proxy-providers:
+  vg-a:
+    type: http
+    url: "https://vg-a.example.com/sub?clean=1&cc=JP&sort=clean&n=10&proto=tcp&shard=0&interval=6"
+    interval: 21600          # 6h，与服务端 interval 参数对齐
+    health-check:
+      enable: true
+      url: "http://www.gstatic.com/generate_204"
+      interval: 300
+      lazy: false            # 新节点上线即测速，不等懒加载
+    override:
+      additional-prefix: "[A] "   # provider 间重名兜底（开 shard 后理论不重名，保底）
+
+  vg-b:
+    type: http
+    url: "https://vg-b.example.com/sub?clean=1&cc=JP&sort=clean&n=10&proto=tcp&shard=1&interval=6"
+    interval: 21600
+    health-check:
+      enable: true
+      url: "http://www.gstatic.com/generate_204"
+      interval: 300
+      lazy: false
+    override:
+      additional-prefix: "[B] "
+
+  vg-c:
+    type: http
+    url: "https://vg-c.example.com/sub?clean=1&cc=JP&sort=clean&n=10&proto=tcp&shard=2&interval=6"
+    interval: 21600
+    health-check:
+      enable: true
+      url: "http://www.gstatic.com/generate_204"
+      interval: 300
+      lazy: false
+    override:
+      additional-prefix: "[C] "
+
+  vg-d:
+    type: http
+    url: "https://vg-d.example.com/sub?clean=1&cc=JP&sort=clean&n=10&proto=tcp&shard=3&interval=6"
+    interval: 21600
+    health-check:
+      enable: true
+      url: "http://www.gstatic.com/generate_204"
+      interval: 300
+      lazy: false
+    override:
+      additional-prefix: "[D] "
+
+proxy-groups:
+  - name: "VG-Auto"
+    type: url-test
+    use: [vg-a, vg-b, vg-c, vg-d]   # 聚合 4 个 provider
+    url: "http://www.gstatic.com/generate_204"
+    interval: 300                    # 5 分钟一轮，坏节点 5~10 分钟内切走
+    tolerance: 120
+
+  - name: "PROXY"
+    type: select
+    proxies: [VG-Auto, DIRECT]
+
+rules:
+  - GEOIP,LAN,DIRECT,no-resolve
+  - GEOIP,CN,DIRECT
+  - MATCH,PROXY
+
+# ---- 参数说明（按需调整） ----
+# clean=1      纯净模式：只要非代理/非机房且 clean>=50 的节点（画像源故障时自动降级 fail-open）
+# cc=JP        只要日本；去掉则全球
+# sort=clean   按纯净度排序（最干净在前）；可换 score/speed/ping
+# n=10         每 provider 取 10 个；4 provider 合计池约 40 个候选
+# proto=tcp    OpenVPN 传输协议，tcp 更稳；udp/any 可选
+# min=3        最低 3Mbps（URL 参数名是 min）
+# maxrisk=30   可选：风险分上限，如 ?maxrisk=30（与 clean=1 二选一即可）
+# interval=6   订阅刷新周期（小时），服务端 profile-update-interval 透传
+# shard=0..3   显式覆盖分片（4-provider 合并时用，模板已带）；不带=该账号默认分片；shard=all=全量

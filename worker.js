@@ -28,7 +28,7 @@ const UPSTREAM_TTL = 120; // 上游列表边缘缓存 2 分钟，兼顾实时性
 //   直接改本块仍兼容，作为控制台未设置时的默认值。不引入 KV / D1 依赖。
 // ============================================================
 const CONFIG = {
-  APP_VERSION: '2.1.2',           // 4 副本必须一致；发版时同步修改（x-vg-version 头核对用）
+  APP_VERSION: '2.1.3',           // 4 副本必须一致；发版时同步修改（x-vg-version 头核对用）
   ACCOUNT_TAG: 'A',              // 本账号标识 A/B/C/D（溯源用）
   SHARD_ID: 0,                   // 本账号分片 0..SHARD_TOTAL-1；无 ?shard= 参数时默认只服务本分片（2.1.2 起生效）
   SHARD_TOTAL: 4,                // 分片总数
@@ -759,7 +759,7 @@ async function handleSubscription(url, ctx) {
     `# 筛选: 国家=${opts.cc || '全球'} 协议=${opts.proto} 数量=${opts.n} 排序=${opts.sort} 最低=${opts.minSpeed / 1e6}Mbps 刷新周期=${opts.interval}h ${qualityDesc}\n` +
     (opts.degraded.length ? `# 注意: [${opts.degraded.join(',')}] 画像源故障，已降级 fail-open（未知节点放行）——非正常纯净状态，请稍后重试\n` : '') +
     `# 纯净度=100-风险分(代理/机房/ASN多信号合成); 想要更干净的出口加 clean=1\n` +
-    `# 入选 ${picked.length} 个节点；客户端(Mihomo/ClashMeta内核≥v1.19.25)会在其中自动测速选最快\n\n`;
+    `# 入选 ${picked.length} 个节点；客户端(Mihomo/ClashMeta内核≥v1.19.30)会在其中自动测速选最快\n\n`;
   const body = headerNote + yaml;
   saveLastgood(ctx, lgSig, body); // M4 R4：非空结果写回边缘缓存，供下次空结果时兜底
   return new Response(body, { status: 200, headers: yamlHeaders(120, opts.interval, opts.degraded) });

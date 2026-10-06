@@ -21,12 +21,14 @@ const VPNGATE_API_URL = 'https://www.vpngate.net/api/iphone/';
 const UPSTREAM_TTL = 120; // 上游列表边缘缓存 2 分钟，兼顾实时性与响应速度
 
 // ============================================================
-// 部署期配置集中块（重构 M1：单文件部署形态保持不变，直接改本块后粘贴部署）
-//   4 账号并联时，4 份部署仅需改动：ACCOUNT_TAG / SHARD_ID / SUB_AUTH_TOKEN / 画像 key
-//   不引入 Workers env / KV / D1 依赖
+// 部署期配置集中块（重构 M1：单文件部署形态保持不变）
+//   4 账号并联时，每份部署的差异项（ACCOUNT_TAG / SHARD_ID / SUB_AUTH_TOKEN / 画像 key）
+//   推荐在 Cloudflare Dashboard → Worker → Settings → Variables 中设置（密钥用加密 Secret）：
+//   代码保持干净版本直接粘贴，控制台的值自动覆盖本块默认值，更新代码不再覆盖密钥（M6.1）。
+//   直接改本块仍兼容，作为控制台未设置时的默认值。不引入 KV / D1 依赖。
 // ============================================================
 const CONFIG = {
-  APP_VERSION: '2.1.0',           // 4 副本必须一致；发版时同步修改（x-vg-version 头核对用）
+  APP_VERSION: '2.1.1',           // 4 副本必须一致；发版时同步修改（x-vg-version 头核对用）
   ACCOUNT_TAG: 'A',              // 本账号标识 A/B/C/D（溯源用）
   SHARD_ID: 0,                   // 本账号分片 0..SHARD_TOTAL-1（M2 ?shard= 参数配合客户端 4 provider 合并）
   SHARD_TOTAL: 4,                // 分片总数
@@ -39,6 +41,29 @@ const CONFIG = {
   FETCH_TIMEOUT_IPAPI: 5000,     // ms；ip-api 批量超时（S-1）
   FETCH_TIMEOUT_SCAM: 3000,      // ms；scamalytics 抓取超时（S-1）
 };
+
+// ------------------------------------------------------------
+// M6.1：控制台变量/密钥覆盖。
+//   在 Cloudflare Dashboard → Worker → Settings → Variables 中设置同名变量（文本）或密钥（加密），
+//   部署的代码无需再手填 CONFIG；以后更新代码直接粘贴干净版本，密钥不再被覆盖。
+//   可覆盖项：ACCOUNT_TAG / SHARD_ID / SUB_AUTH_TOKEN / ABUSEIPDB_KEY / PROXYCHECK_KEY
+//   说明：env 在同一个 Worker 部署内对所有请求恒定，因此只在首次请求时合并一次（幂等，并发安全）。
+// ------------------------------------------------------------
+let __envMerged = false;
+function mergeEnvOverrides(env) {
+  if (__envMerged) return;
+  __envMerged = true; // 先置位：即使 env 为空也只执行一次
+  if (!env) return;
+  const str = (v) => (v === undefined || v === null ? '' : String(v));
+  if (str(env.ACCOUNT_TAG).trim() !== '') CONFIG.ACCOUNT_TAG = str(env.ACCOUNT_TAG).trim();
+  if (str(env.SHARD_ID).trim() !== '') {
+    const n = parseInt(str(env.SHARD_ID).trim(), 10);
+    if (Number.isFinite(n)) CONFIG.SHARD_ID = n;
+  }
+  for (const k of ['SUB_AUTH_TOKEN', 'ABUSEIPDB_KEY', 'PROXYCHECK_KEY']) {
+    if (str(env[k]).trim() !== '') CONFIG[k] = str(env[k]); // 密钥原文保留，使用处自行 trim
+  }
+}
 
 // ============================================================
 // 合并订阅(?mode=merged)专用：自建「日本承载IP落地」VLESS-Reality 节点
@@ -69,6 +94,7 @@ function isSelfNodeUnconfigured() {
 
 export default {
   async fetch(request, env, ctx) {
+    mergeEnvOverrides(env); // M6.1：控制台变量/密钥覆盖 CONFIG（首次请求合并一次）
     const url = new URL(request.url);
     const p = url.pathname.replace(/\/+$/, '') || '/';
     try {

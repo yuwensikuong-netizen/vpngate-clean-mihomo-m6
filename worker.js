@@ -28,7 +28,7 @@ const UPSTREAM_TTL = 120; // 上游列表边缘缓存 2 分钟，兼顾实时性
 //   直接改本块仍兼容，作为控制台未设置时的默认值。不引入 KV / D1 依赖。
 // ============================================================
 const CONFIG = {
-  APP_VERSION: '2.1.3',           // 4 副本必须一致；发版时同步修改（x-vg-version 头核对用）
+  APP_VERSION: '2.1.4',           // 4 副本必须一致；发版时同步修改（x-vg-version 头核对用）
   ACCOUNT_TAG: 'A',              // 本账号标识 A/B/C/D（溯源用）
   SHARD_ID: 0,                   // 本账号分片 0..SHARD_TOTAL-1；无 ?shard= 参数时默认只服务本分片（2.1.2 起生效）
   SHARD_TOTAL: 4,                // 分片总数
@@ -680,6 +680,21 @@ function saveLastgood(ctx, sig, text) {
 
 async function handleSubscription(url, ctx) {
   const q = url.searchParams;
+  // 2.1.4：一键合流 ?one=1 —— 302 随机重定向到 4 个后端之一（强制 shard=all 全量），
+  // 客户端只需填一个订阅地址，4 账号额度随请求自然分摊。Mihomo 的订阅拉取会自动跟随 302。
+  if (q.get('one') === '1') {
+    const backends = [
+      'https://vpngate-clean-a.yuwensikuong.workers.dev',
+      'https://0424.ccwu.cc',
+      'https://17623041701.ccwu.cc',
+      'https://2544998907.kdns.fr',
+    ];
+    const pick = backends[Math.floor(Math.random() * backends.length)];
+    const nq = new URLSearchParams(q);
+    nq.delete('one');
+    nq.set('shard', 'all'); // 合流必须全量，否则随机后端每次只给 1/4
+    return Response.redirect(`${pick}/sub?${nq.toString()}`, 302);
+  }
   const mode = (q.get('mode') || '').trim().toLowerCase();
   if (mode === 'merged' || q.get('merge') === '1') return await handleMergedSubscription(q, ctx, false);
   if (mode === 'self') {

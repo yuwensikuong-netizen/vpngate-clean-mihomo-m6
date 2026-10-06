@@ -13,7 +13,7 @@ const HTML_PAGE = "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n<meta charset
 //             sort=score|speed|ping|clean(默认score)  min=最低Mbps(默认3)
 //             clean=1(只留非代理/非机房且clean>=50)  maxrisk=0..100 风险上限
 //             name=选择组名  refresh=1&token=xxx(绕过缓存，需 CONFIG.SUB_AUTH_TOKEN 鉴权)
-//             interval=1..24(订阅刷新周期小时数，默认 6)  shard=0..3(4 账号并联分片)
+//             interval=1..24(订阅刷新周期小时数，默认 6)  shard=0..3(分片覆盖)/all(全量)；不带则默认本账号分片
 // 质量源: ip-api.com 批量接口；画像内存缓存分层 8h/24h（M6 F4）；抓取失败只记 60s 负缓存（M6 F1）；
 //          过期画像 SWR：先用旧值保订阅可用，后台异步刷新（M6 F3）；画像源故障时 clean=1 自动降级 fail-open，不阻断出节点
 // ============================================================
@@ -28,9 +28,9 @@ const UPSTREAM_TTL = 120; // 上游列表边缘缓存 2 分钟，兼顾实时性
 //   直接改本块仍兼容，作为控制台未设置时的默认值。不引入 KV / D1 依赖。
 // ============================================================
 const CONFIG = {
-  APP_VERSION: '2.1.1',           // 4 副本必须一致；发版时同步修改（x-vg-version 头核对用）
+  APP_VERSION: '2.1.2',           // 4 副本必须一致；发版时同步修改（x-vg-version 头核对用）
   ACCOUNT_TAG: 'A',              // 本账号标识 A/B/C/D（溯源用）
-  SHARD_ID: 0,                   // 本账号分片 0..SHARD_TOTAL-1（M2 ?shard= 参数配合客户端 4 provider 合并）
+  SHARD_ID: 0,                   // 本账号分片 0..SHARD_TOTAL-1；无 ?shard= 参数时默认只服务本分片（2.1.2 起生效）
   SHARD_TOTAL: 4,                // 分片总数
   SUB_AUTH_TOKEN: '',            // ?refresh=1 鉴权 token；为空=强制刷新默认关闭（U-2，防 4 账号额度放大器）
   ABUSEIPDB_KEY: '',             // M4 画像 L3 精查 key；为空=该源禁用
@@ -712,17 +712,20 @@ async function handleSubscription(url, ctx) {
     });
   }
   const { servers: allServers, cached } = await getServers(ctx, wantRefresh);
-  // M2：分片过滤（4 账号并联：客户端 4 provider 合并时各账号只服务自己的分片，天然去重；
-  // 单独使用某账号订阅时不要带 shard 参数）
+  // M2：分片过滤（4 账号并联去重）。2.1.2 起：无 ?shard= 参数时默认只服务本账号分片
+  // （CONFIG.SHARD_ID），裸 URL 也自动去重；?shard=k 显式覆盖；?shard=all（或非法值）= 不过滤拿全量。
   let servers = allServers;
   let shardSig = '';
   const shardParam = q.get('shard');
+  let k = -1;
   if (shardParam !== null && shardParam !== '') {
-    const k = clampInt(shardParam, 0, CONFIG.SHARD_TOTAL - 1, -1);
-    if (k >= 0) {
-      servers = servers.filter((s) => hashShard(s.ip) % CONFIG.SHARD_TOTAL === k);
-      shardSig = 'shard' + k;
-    }
+    k = clampInt(shardParam, 0, CONFIG.SHARD_TOTAL - 1, -1);
+  } else {
+    k = clampInt(CONFIG.SHARD_ID, 0, CONFIG.SHARD_TOTAL - 1, -1);
+  }
+  if (k >= 0) {
+    servers = servers.filter((s) => hashShard(s.ip) % CONFIG.SHARD_TOTAL === k);
+    shardSig = 'shard' + k;
   }
   // M2 管线重排：轻量预筛 → 截断 → 仅对候选画像（原：全量画像后再过滤）
   const cands = prefilterCandidates(servers, opts);
